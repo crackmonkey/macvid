@@ -1,0 +1,97 @@
+.program vidgen
+.side_set 1 opt
+; load 512 into y for looping a full scanline
+; 31 bits so it doesn't trigger auto push
+set y, 0b0010
+in y, 4
+in null, 20
+mov y, isr
+mov isr, null ; clear ISR
+jmp y-- dec
+dec:
+
+.wrap_target
+vsync:
+    wait 0 irq 5
+
+mov x, y
+output_line:
+irq wait 4
+
+pixloop_512:
+    out pins, 1 side 1 [2] ; delay double the pixel
+    jmp x-- pixloop_512 side 1
+set pins, 0
+.wrap
+
+.program gen_hsync
+.side_set 1 opt
+out x, 16 ; get loop count
+out exec, 16 ; run setup instruction
+delay_loop:
+    jmp x-- delay_loop
+
+.program gen_vsync
+.side_set 1 opt
+out x, 16 ; get loop count
+out exec, 16 ; run setup instruction
+delay_loop:
+    irq wait 4
+    jmp x-- delay_loop
+
+% c-sdk {
+
+#define HSYNC_SM 0
+#define VSYNC_SM 1
+#define VIDEO_SM 2
+
+#define IRQ_CLEAR_SIDE_0 (pio_encode_irq_clear(true, 4) | pio_encode_sideset_opt(1, 0))
+#define IRQ_CLEAR_SIDE_1 (pio_encode_irq_clear(true, 4) | pio_encode_sideset_opt(1, 1))
+#define IRQ_SET_SIDE_0 (pio_encode_irq_set(true, 4) | pio_encode_sideset_opt(1, 0))
+#define IRQ_SET_SIDE_1 (pio_encode_irq_set(true, 4) | pio_encode_sideset_opt(1, 1))
+#define NOP_SIDE_0 (pio_encode_nop() | pio_encode_sideset_opt(1, 0))
+#define NOP_SIDE_1 (pio_encode_nop() | pio_encode_sideset_opt(1, 1))
+
+void vidgen_program_init(PIO pio, uint video_pin, uint hsync_pin, uint vsync_pin) {
+   pio_claim_sm_mask(pio, 1<<HSYNC_SM | 1<<VSYNC_SM | 1<<VIDEO_SM);
+
+   // Setup HSync on the first SM
+   pio_gpio_init(pio, hsync_pin);
+   uint hsync_offset = pio_add_program(pio, &gen_hsync_program);
+   pio_sm_config hsync_c = gen_hsync_program_get_default_config(hsync_offset);
+   sm_config_set_out_shift(&hsync_c, false, true, 32); // auto-pull
+   sm_config_set_fifo_join(&hsync_c, PIO_FIFO_JOIN_TX);
+   sm_config_set_sideset_pins(&hsync_c, hsync_pin);
+   // run at full speed
+   sm_config_set_clkdiv_int_frac(&hsync_c, 1, 0);
+   pio_sm_set_consecutive_pindirs(pio, HSYNC_SM, hsync_pin, 1, true);
+   pio_sm_init(pio, HSYNC_SM, hsync_offset, &hsync_c);
+
+
+   // Setup VSync on the second SM
+   pio_gpio_init(pio, vsync_pin);
+   uint vsync_offset = pio_add_program(pio, &gen_vsync_program);
+   pio_sm_config vsync_c = gen_vsync_program_get_default_config(vsync_offset);
+   sm_config_set_sideset_pins(&vsync_c, vsync_pin);
+   sm_config_set_out_shift(&vsync_c, false, true, 32); // auto-pull
+   sm_config_set_fifo_join(&vsync_c, PIO_FIFO_JOIN_TX);
+   // run at full speed
+   sm_config_set_clkdiv_int_frac(&vsync_c, 1, 0);
+   pio_sm_set_consecutive_pindirs(pio, VSYNC_SM, vsync_pin, 1, true);
+   pio_sm_init(pio, VSYNC_SM, vsync_offset, &vsync_c);
+
+   // Setup video generator on the third SM
+   pio_gpio_init(pio, video_pin);
+   pio_gpio_init(pio, 19);
+   uint vidgen_offset = pio_add_program(pio, &vidgen_program);
+   pio_sm_config vidgen_c = vidgen_program_get_default_config(vidgen_offset);
+   sm_config_set_out_shift(&vidgen_c, false, true, 32); // auto-pull 32-bits
+   sm_config_set_sideset_pins(&vidgen_c, 19);
+   sm_config_set_fifo_join(&vidgen_c, PIO_FIFO_JOIN_TX);
+   sm_config_set_out_pins(&vidgen_c, video_pin, 1);
+   sm_config_set_set_pins(&vidgen_c, video_pin, 1);
+   pio_sm_set_consecutive_pindirs(pio, VIDEO_SM, video_pin, 1, true);
+   pio_sm_init(pio, VIDEO_SM, vidgen_offset, &vidgen_c);
+
+}
+%}

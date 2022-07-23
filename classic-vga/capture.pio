@@ -1,32 +1,32 @@
 .program vidcap
 .side_set 1
 
-jmp pin acquireline ; vsync high (inactive), grab a scanline
+jmp pin acquireline side 0 ; vsync high (inactive), grab a scanline
 vsync:
-    wait 0 pin 2 ; wait for a vsync pulse
-    wait 1 pin 2 ; wait out the vsync pulse
-set x, 23
+    wait 0 pin 2 side 0 ; wait for a vsync pulse
+    wait 1 pin 2 side 0 ; wait out the vsync pulse
+set x, 23 side 0
 vback_porch: ; 24 lines
-    wait 0 pin 1
-    wait 1 pin 1
-    jmp x-- vback_porch
+    wait 0 pin 1 side 0
+    wait 1 pin 1 side 0
+    jmp x-- vback_porch side 0
 
 acquireline:
-wait 0 pin 1 ; wait for HSYNC low (start)
+wait 0 pin 1 side 0 ; wait for HSYNC low (start)
 ; load 178 into x, HBLANK time: HSYNC to start of data
 ; we should have plenty of time to do this in HBLANK
-set x, 0b001
-in x, 3
-set x, 0b1011
-in x, 4
-in null, 24
-mov x, isr
-mov isr, null ; clear ISR for actual data
-jmp x-- dec
+set x, 0b001 side 0
+in x, 3 side 0
+set x, 0b1011 side 0
+in x, 4 side 0
+in null, 24 side 0
+mov x, isr side 0
+mov isr, null side 0 ; clear ISR for actual data
+jmp x-- dec side 0
 dec:
-wait 0 pin 1 ; wait for HSYNC low
+wait 0 pin 1 side 0 ; wait for HSYNC low
 acquireline_wait: ; hblank back porch
-  jmp x-- acquireline_wait [7] ; 8 cycle (1px) wait
+  jmp x-- acquireline_wait side 0 [7] ; 8 cycle (1px) wait
 
 ; pixloop_512 makes eight 64-bit acquisitions for a total of 512 pixels.
 set y, 7 side 1
@@ -48,13 +48,13 @@ pixloop_512:
     jmp y-- pixloop_512 side 1
 % c-sdk {
 
-void capture_program_init(PIO pio, uint sm, uint offset, uint data_pin, uint hsync_pin, uint vsync_pin) {
+void vidcap_program_init(PIO pio, uint sm, uint offset, uint data_pin) {
    pio_gpio_init(pio, data_pin);
-   pio_gpio_init(pio, hsync_pin);
-   pio_gpio_init(pio, vsync_pin);
-   pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
-   pio_sm_config c = capture_program_get_default_config(offset);
-   sm_config_set_in_pins(&c, data_pin, 3);
+   pio_gpio_init(pio, data_pin+1);
+   pio_gpio_init(pio, data_pin+2);
+   pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 3, true);
+   pio_sm_config c = vidcap_program_get_default_config(offset);
+   sm_config_set_in_pins(&c, data_pin);
    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
    pio_sm_init(pio, sm, offset, &c);
 }
