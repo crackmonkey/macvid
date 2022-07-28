@@ -3,15 +3,13 @@ cmake_minimum_required(VERSION 3.12)
 # Pull in SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-# Pico_extras for scanvideo
-include(../pico-extras/external/pico_extras_import.cmake)
-
 project(classic-vga C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
+add_definitions(-DPARAM_ASSERTIONS_ENABLED_DMA=1)
 add_executable(classic-vga)
 
 pico_generate_pio_header(classic-vga ${CMAKE_CURRENT_LIST_DIR}/capture.pio)

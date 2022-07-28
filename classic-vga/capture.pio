@@ -48,14 +48,25 @@ pixloop_512:
     jmp y-- pixloop_512 side 1
 % c-sdk {
 
-void vidcap_program_init(PIO pio, uint sm, uint offset, uint data_pin) {
-   pio_gpio_init(pio, data_pin);
-   pio_gpio_init(pio, data_pin+1);
-   pio_gpio_init(pio, data_pin+2);
-   pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 3, true);
+// input pins must be sequential, video, hsync, vsync, debug output
+uint vidcap_program_init(PIO pio, uint video_pin) {
+   uint sm = pio_claim_unused_sm(pio, true);
+   uint offset = pio_add_program(pio, &vidcap_program);
+
+   pio_gpio_init(pio, video_pin);
+   pio_gpio_init(pio, video_pin+1); // hsync
+   pio_gpio_init(pio, video_pin+2); // vsync
+   pio_gpio_init(pio, video_pin+3); // for debugging
+   pio_sm_set_consecutive_pindirs(pio, sm, video_pin, 3, false);
+   pio_sm_set_consecutive_pindirs(pio, sm, video_pin+3, 1, true);
+
    pio_sm_config c = vidcap_program_get_default_config(offset);
-   sm_config_set_in_pins(&c, data_pin);
+   sm_config_set_in_pins(&c, video_pin);
+   sm_config_set_in_shift(&c, true, true, 32); // auto-push
+   sm_config_set_sideset_pins(&c, video_pin+3);
+   sm_config_set_jmp_pin(&c, video_pin+2);
    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
    pio_sm_init(pio, sm, offset, &c);
+   return sm;
 }
 %}

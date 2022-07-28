@@ -2,6 +2,7 @@
 .side_set 1 opt
 ; load 512 into y for looping a full scanline
 ; 31 bits so it doesn't trigger auto push
+mov y, isr
 set y, 0b0010
 in y, 4
 in null, 20
@@ -9,9 +10,10 @@ mov y, isr
 mov isr, null ; clear ISR
 jmp y-- dec
 dec:
+irq set 6 ; feed first scanline pointer into DMA
 
 .wrap_target
-vsync:
+vblank:
     wait 0 irq 5
 
 mov x, y
@@ -21,7 +23,8 @@ irq wait 4
 pixloop_512:
     out pins, 1 side 1 [2] ; delay double the pixel
     jmp x-- pixloop_512 side 1
-set pins, 0
+set pins, 0 side 0
+irq set 6 ; scanline done
 .wrap
 
 .program gen_hsync
@@ -39,11 +42,16 @@ delay_loop:
     irq wait 4
     jmp x-- delay_loop
 
+.program next_scanline
+.side_set 1
+wait 1 irq 6 side 0
+push noblock side 1 ; send 0 to the Arm to trigger updating the scanline pointer for vidgen
 % c-sdk {
 
 #define HSYNC_SM 0
 #define VSYNC_SM 1
 #define VIDEO_SM 2
+#define NEXT_SL_SM 3
 
 #define IRQ_CLEAR_SIDE_0 (pio_encode_irq_clear(true, 4) | pio_encode_sideset_opt(1, 0))
 #define IRQ_CLEAR_SIDE_1 (pio_encode_irq_clear(true, 4) | pio_encode_sideset_opt(1, 1))
@@ -85,13 +93,19 @@ void vidgen_program_init(PIO pio, uint video_pin, uint hsync_pin, uint vsync_pin
    pio_gpio_init(pio, 19);
    uint vidgen_offset = pio_add_program(pio, &vidgen_program);
    pio_sm_config vidgen_c = vidgen_program_get_default_config(vidgen_offset);
-   sm_config_set_out_shift(&vidgen_c, false, true, 32); // auto-pull 32-bits
+   sm_config_set_out_shift(&vidgen_c, true, true, 32); // auto-pull 32-bits
    sm_config_set_sideset_pins(&vidgen_c, 19);
    sm_config_set_fifo_join(&vidgen_c, PIO_FIFO_JOIN_TX);
    sm_config_set_out_pins(&vidgen_c, video_pin, 1);
    sm_config_set_set_pins(&vidgen_c, video_pin, 1);
    pio_sm_set_consecutive_pindirs(pio, VIDEO_SM, video_pin, 1, true);
+   pio_sm_set_consecutive_pindirs(pio, VIDEO_SM, 19, 1, true);
    pio_sm_init(pio, VIDEO_SM, vidgen_offset, &vidgen_c);
 
+   // Setup next_scanline on the 4th sm
+   uint next_scanline_offset = pio_add_program(pio, &next_scanline_program);
+   pio_sm_config next_scanline_c = next_scanline_program_get_default_config(next_scanline_offset);
+   sm_config_set_fifo_join(&next_scanline_c, PIO_FIFO_JOIN_RX);
+   pio_sm_init(pio, NEXT_SL_SM, next_scanline_offset, &next_scanline_c);
 }
 %}
